@@ -1,0 +1,12 @@
+name: Review Event Observer
+on:
+  pull_request_review:
+    types: [submitted, dismissed]
+permissions:
+  contents: read
+jobs:
+  observe-review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: echo 'A review event triggered this workflow.'
