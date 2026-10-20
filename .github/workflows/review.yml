@@ -50,15 +50,4 @@ jobs:
           writeFileSync('review.json', JSON.stringify(review));
           const result = JSON.parse(execFileSync('gh',['api','--method','POST',endpoint+'/reviews','--input','review.json'],{encoding:'utf8'}));
           console.log(JSON.stringify({id:result.id,state:result.state,commit:result.commit_id,actor:result.user.login,url:result.html_url}));
-          if (decision === 'APPROVE') {
-            const [owner,name] = process.env.GITHUB_REPOSITORY.split('/');
-            const query = 'query($owner:String!,$name:String!,$pr:Int!){repository(owner:$owner,name:$name){pullRequest(number:$pr){reviewThreads(first:30){nodes{id isResolved comments(first:1){nodes{author{login}}}}}}}}';
-            writeFileSync('query.json',JSON.stringify({query,variables:{owner,name,pr:Number(pr)}}));
-            const threads = JSON.parse(execFileSync('gh',['api','graphql','--input','query.json'],{encoding:'utf8'})).data.repository.pullRequest.reviewThreads.nodes;
-            for (const thread of threads) {
-              if (thread.isResolved || thread.comments.nodes[0]?.author?.login !== result.user.login) continue;
-              writeFileSync('resolve.json',JSON.stringify({query:'mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id isResolved}}}',variables:{id:thread.id}}));
-              execFileSync('gh',['api','graphql','--input','resolve.json']);
-            }
-          }
           NODE
