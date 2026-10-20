@@ -1,0 +1,64 @@
+name: Fixture Reviewer
+run-name: Fixture review ${{ inputs.pr }} ${{ inputs.decision }} ${{ inputs.head }}
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        required: true
+        type: string
+      decision:
+        required: true
+        type: choice
+        options: [APPROVE, REQUEST_CHANGES, COMMENT]
+      head:
+        required: true
+        type: string
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  publish-review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Publish formal fixture review at an exact head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr }}
+          REVIEW_DECISION: ${{ inputs.decision }}
+          EXPECTED_HEAD: ${{ inputs.head }}
+        run: |
+          node <<'NODE'
+          const {execFileSync} = require('node:child_process');
+          const {writeFileSync} = require('node:fs');
+          const pr = process.env.PR_NUMBER;
+          const sha = process.env.EXPECTED_HEAD;
+          const decision = process.env.REVIEW_DECISION;
+          if (!/^\d+$/.test(pr) || !/^[0-9a-f]{40}$/.test(sha)
+            || !['APPROVE','REQUEST_CHANGES','COMMENT'].includes(decision)) throw Error('Invalid fixture input');
+          const endpoint = `repos/${process.env.GITHUB_REPOSITORY}/pulls/${pr}`;
+          const current = JSON.parse(execFileSync('gh',['api',endpoint],{encoding:'utf8'}));
+          if (current.head.sha !== sha) throw Error('Stale expected head');
+          const review = {
+            event: decision, commit_id: sha,
+            body: 'Synthetic Tool delivery PoC. This exercises infrastructure, not AI code-review quality.'
+          };
+          if (decision === 'REQUEST_CHANGES') review.comments = [{
+            path:'value.txt', line:1, side:'RIGHT',
+            body:'Fixture finding: change the synthetic value to ok.'
+          }];
+          writeFileSync('review.json', JSON.stringify(review));
+          const result = JSON.parse(execFileSync('gh',['api','--method','POST',endpoint+'/reviews','--input','review.json'],{encoding:'utf8'}));
+          console.log(JSON.stringify({id:result.id,state:result.state,commit:result.commit_id,actor:result.user.login,url:result.html_url}));
+          if (decision === 'APPROVE') {
+            const [owner,name] = process.env.GITHUB_REPOSITORY.split('/');
+            const query = 'query($owner:String!,$name:String!,$pr:Int!){repository(owner:$owner,name:$name){pullRequest(number:$pr){reviewThreads(first:30){nodes{id isResolved comments(first:1){nodes{author{login}}}}}}}}';
+            writeFileSync('query.json',JSON.stringify({query,variables:{owner,name,pr:Number(pr)}}));
+            const threads = JSON.parse(execFileSync('gh',['api','graphql','--input','query.json'],{encoding:'utf8'})).data.repository.pullRequest.reviewThreads.nodes;
+            for (const thread of threads) {
+              if (thread.isResolved || thread.comments.nodes[0]?.author?.login !== result.user.login) continue;
+              writeFileSync('resolve.json',JSON.stringify({query:'mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id isResolved}}}',variables:{id:thread.id}}));
+              execFileSync('gh',['api','graphql','--input','resolve.json']);
+            }
+          }
+          NODE
