@@ -1,0 +1,41 @@
+name: Token Author Probe
+run-name: Token author probe ${{ inputs.suffix }}
+on:
+  workflow_dispatch:
+    inputs:
+      suffix:
+        required: true
+        type: string
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  create-fixture-pr:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Create synthetic PR using the built-in workflow token
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SUFFIX: ${{ inputs.suffix }}
+        run: |
+          node <<'NODE'
+          const {execFileSync} = require('node:child_process');
+          const {writeFileSync} = require('node:fs');
+          const suffix = process.env.SUFFIX;
+          if (!/^[a-z0-9-]{1,40}$/.test(suffix)) throw Error('Invalid fixture suffix');
+          const base = 'repos/'+process.env.GITHUB_REPOSITORY;
+          function api(path,body) {
+            const args=['api'];
+            if(body){writeFileSync('body.json',JSON.stringify(body));args.push('--method','POST','--input','body.json');}
+            return JSON.parse(execFileSync('gh',[...args,base+path],{encoding:'utf8'}));
+          }
+          const main=api('/git/ref/heads/main');
+          const branch='fixture/token-author-'+suffix;
+          api('/git/refs',{ref:'refs/heads/'+branch,sha:main.object.sha});
+          const file=api('/contents/token-probe.txt?ref=main');
+          writeFileSync('body.json',JSON.stringify({message:'Synthetic token trigger probe',content:Buffer.from('token-generated\n').toString('base64'),sha:file.sha,branch}));
+          execFileSync('gh',['api','--method','PUT',base+'/contents/token-probe.txt','--input','body.json']);
+          const pr=api('/pulls',{head:branch,base:'main',title:'Synthetic token-authored trigger probe '+suffix,body:'Fixture only. No Tool code or secrets.'});
+          console.log(JSON.stringify({pr:pr.number,url:pr.html_url,actor:pr.user.login,head:pr.head.sha}));
+          NODE
