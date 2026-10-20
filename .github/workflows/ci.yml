@@ -1,0 +1,19 @@
+name: Fixture CI
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+jobs:
+  fixture-check:
+    name: fixture-check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Validate synthetic value without executing PR code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/contents/value.txt?ref=$HEAD_SHA" --jq .content |
+            base64 --decode | grep -qx 'ok'
